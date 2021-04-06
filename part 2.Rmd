@@ -1,0 +1,377 @@
+---
+title: "Do NFL players Live Shorter Lives?"
+author: "Spencer Cook"
+date: "November 7, 2017"
+output:
+  html_document:
+    code_folding: hide
+    keep_md: yes
+    theme: yeti
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, fig.height = 6, fig.width = 8, fig.align = "center")
+library(readr)
+library(tidyverse)
+library(lubridate)
+library(gapminder)
+library(stringr)
+library(ggfortify)
+library(readr)
+library(ggplot2)
+library(eeptools)
+library(survival)
+library(survminer)
+```
+
+```{r, message = FALSE, warning = FALSE, echo = FALSE}
+nfl_survival <- read_csv("nfl_survival.csv")
+nfl_life <- read_csv("nfl_life.csv")
+life_expectancy <- read_csv("life-expectancy.csv")
+nfl_1920 <- read_csv("pro-1920.csv")
+life07 <- read_csv("life_table_07.csv")
+BMI <- read_csv("BMI.csv")
+joined_obese <- read_csv("joined_obese.csv")
+
+offense <- c("QB", "RB", "HB", "TB", "LH", "RH", "BB", "B", "WB", "WR", "FL", "SE", "E", "TE", "LE", "LT", "LOT", "T", "LG", "G", "C", "RG", "RT", "ROT", "RE", "OT", "Offensive Line", "Receivers", "Tight End", "Running Back", "Quarter Back", "OL")
+
+# offensive positions
+offensive_line <- c("G", "T", "C", "OL", "OT")
+receiver <- c("WR", "FL", "SE")
+tight_end <- c("TE", "E")
+running_back <- c("RB", "HB", "FB", "B", "TB", "WB")
+quarter_back <- c("QB")
+other <- c("BB", "K", "P")
+
+defense <- c("DT","DE","DL", "NT", "MG", "DG", "RDT", "RDE", "LOLB", "RUSH", "OLB", "LLB", "LILB", "WILL", "ILB", "SLB", "MLB", "MIKE", "WLB", "RILB", "RLB", "ROLB", "SAM", "LB", "LCB", "CB", "RCB", "SS", "FS", "LDH", "RDH", "LS", "S", "RS", "DB", "Line Backer", "Defensive Line", "Safety")
+
+# defense
+line_backers <- c("DB", "LB", "OLB", "ILB")
+defensive_line <- c("DE", "DT", "NT", "DL", "MG", "DG")
+safety <- c("CB", "S", "FS", "SS", "LS")
+
+kickers <- c("K", "P")
+
+offensive_line <- str_to_lower(offensive_line)
+receiver <- str_to_lower(receiver)
+tight_end <- str_to_lower(tight_end)
+running_back <- str_to_lower(running_back)
+quarter_back <- str_to_lower(quarter_back)
+other <- str_to_lower(other)
+line_backers <- str_to_lower(line_backers)
+defensive_line <- str_to_lower(defensive_line)
+safety <- str_to_lower(safety)
+offense <- str_to_lower(offense)
+defense <- str_to_lower(defense)
+kickers <- str_to_lower(kickers)
+```
+
+## Background
+
+The health of NFL players is becoming a rising issue in the country. One reason for this is the discovery of CTE, a degenerative brain disease caused by repetitive brain trauma. People are now questioning if the sport is safe. 
+
+Some report that average life expectancy for NFL players is much lower than the general population. One Harvard professor said that "professional football players in both the United States and Canada have life expectancies in the mid to late 50’s." [^1]
+
+On the contrary, we also see studies reporting the opposite. The National institute for Occupational Health and Safety reported, "We found the players in our study had a much lower rate of death overall compared to men in the general population. This means that, on average, NFL players (77.5-year life expectancy) are actually living longer than men in the general population (74.7 years)." [^2]
+
+These are very conflicting conclusions. In this project, I am attempting to find out if NFL players die sooner or later than the general male population.
+
+## Examples of Poor Analysis
+
+When dealing with life expectancy, it is easy to misrepresent the data. This first bar plot is taking the median age of death for the players in the dataset and comparing it to United States life expectancy in 2005 for males. The problem with this plot is that it is only accounting for NFL players that have died. There are thousands of players that are alive and surpassing the age they were expected to die. A proper analysis of the data will account for all players. Accounting for just age of death can easily make it look like NFL players don't live as long as the general public.
+
+```{r, warning = FALSE, message = FALSE, fig.height= 7, fig.width=7}
+nfl_survival$age_years <- as.numeric(nfl_survival$age_years)
+nfl_survival %>%
+  filter(status == "dead") %>%
+  group_by(type) %>%
+  summarise(avg_age = median(age_years)) %>%
+  add_row(type = "National Avg(2005)", avg_age = 77.62) %>%
+  ggplot() +
+  geom_bar(aes(x = reorder(type, -avg_age), avg_age, fill = type), stat = "identity") +
+  labs(y = "Median Age of Death", title = "Age of Death for NFL Players Compared to USA Average", x = "") +
+  guides(fill = FALSE) +
+  geom_text(aes(type, avg_age, label = avg_age), position = position_dodge(), vjust = -.25) +
+  theme_classic()
+```
+
+This next example of a bad visualization is particularly interesting. For this graph, life expectancy was gathered for each year in the past century. The NFL players dataset contains the birthyear of each player, so their age was subtracted from the life expectancy corresponding to the players birth year. This difference between expected age and actual age was the variable used for the histogram.
+
+```{r, message = FALSE}
+#histogram of difference
+ggplot(nfl_life, aes(x = difference)) +
+    geom_histogram(aes(y = ..density..), col = "red", fill = "green", alpha = .2) +
+    geom_density(color = 2, size = 1) +
+    geom_vline(aes(xintercept = mean(difference)), col = "brown", size = 1.5, linetype = "dashed") +
+    scale_x_continuous(breaks = seq(-60, 60, 10)) +
+    annotate("label", label = "Mean: -17.45", x = -3, y = .02) +
+    labs(title = "Histogram of Difference Between Expected Age and Actual Age", y = "Density", x = "Difference") +
+    theme_grey()
+```
+
+This may seem informative at first, but it still does not properly account for players that are alive. The mean difference was -17.45. Perhaps this is how some conclude that life expectancy for NFL players is in the high 50's, since 77.62 minus 17.45 is about 60. NFL players very well might live less than the general population, but that is not a conclusion that can be made from these visualizations.
+
+## Better Data
+
+For this project I decided that the most appropriate way to describe the data would be with Kaplan-Meier curves. These curves take the population of the data you are working with and report the probability for a subject to survive to a specific age. This works better because it accounts for all players, dead and alive.
+
+Here is the Kaplan-Meier curve for all NFL players that have played in the league. We can see that 50 percent live to be about 78. 
+
+```{r}
+nfl_surv <- survfit(Surv(age_years, dead)~1, data = nfl_survival)
+ggnfl <- ggsurvplot(nfl_surv, surv.median.line = "hv", break.x.by = 5, legend = "none",
+           title = "NFL Survival Curve", xlab = "Age",
+           xlim = c(20,104), conf.int = TRUE, ggtheme = theme_grey())
+
+ggnfl$plot <- ggnfl$plot + labs(
+  title = "NFL Survival Curve")
+
+ggnfl <- ggpar(
+  ggnfl,
+  font.title = c(16, "bold", "darkblue"),
+  font.x = c(14, "bold.italic", "darkred"),
+  font.y = c(14, "bold.italic", "darkred"),
+  font.xtickslab = c(12, "plain", "darkgreen"),
+  font.ytickslab = c(12, "plain", "darkgreen")
+)
+
+ggnfl
+```
+
+Here's the curve again shown alongside the survival curve for U.S. males in 2007. Since anyone that dies before 20 could not be in the NFL, it makes sense that the NFL curve starts off with a slightly higher probability. We then see the curve for the general public to be somewhat higher from about 65 years and beyond. 
+
+
+```{r, warning = FALSE, message = FALSE}
+# convert to ggplot format
+res <- fortify(nfl_surv)
+
+ggplot(res, aes(time, surv, color = "NFL")) +
+    geom_line(size = 1.2) +
+    geom_line(data = life07, aes(age_years, percent_survived, color = "USA"), size = 1.2) +
+    labs(y = "Survival Probability", x = "Age in Years", title = "Compared to the General Public", colour = "") +
+    theme(plot.title = element_text(hjust = .5)) +
+    scale_x_continuous(breaks = seq(20,100,10)) +
+    theme_grey() +
+    theme(plot.title = element_text(color = "darkblue", face = "bold", size = 16))
+          
+```
+
+## Who's bringing it down?
+
+The survival curve showed a slightly higher probability of longevity for the general public. Let's now attempt to explore if there is a common group of NFL players that are living a shorter amount of time. First, let's look at position:
+
+```{r}
+# Survival curve for position type
+type_surv <- survfit(Surv(age_years, dead)~type, data = nfl_survival)
+ggpos <- ggsurvplot(type_surv, break.x.by = 10, legend.title = "",
+           legend.labs = c("Defense", "Kickers", "Offense"), xlab = "Age", 
+           ggtheme = theme_grey())
+
+ggpos$plot <- ggpos$plot + labs(
+  title = "NFL Survival Curve",
+  subtitle = "Based on Position"
+)
+
+ggpos <- ggpar(
+  ggpos,
+  font.title = c(16, "bold", "darkblue"),
+  font.subtitle = c(15, "bold.italic", "purple"),
+  font.xtickslab = c(12, "plain", "darkgreen"),
+  font.ytickslab = c(12, "plain", "darkgreen"),
+  font.x = c(14, "bold.italic", "darkred"),
+  font.y = c(14, "bold.italic", "darkred")
+)
+
+ggpos
+```
+
+Looks like offensive players are dying a little bit sooner. Maybe there is more insight to be gained by looking at the specific position rather than a generalized version. This next plot will look at different positions and their individual probabilities of living to age 75.
+
+```{r, fig.height=8, fig.width=6}
+# grouped
+survprim <- survfit(Surv(age_years, dead)~primary, data = nfl_survival)
+
+survprim <- fortify(survprim)
+
+survprimorder <- survprim %>%
+  filter(time == 75) %>%
+  mutate(surv = round(surv, digits = 2)) %>%
+  mutate(strata = str_trim(str_to_lower(strata)), 
+    type = case_when(
+      str_detect(strata, paste(defense, collapse = "|")) ~ "Defense", 
+      str_detect(strata, paste(offense, collapse = "|")) ~ "Offense",
+      str_detect(strata, paste(kickers, collapse = "|")) ~ "Kickers"
+    ), strata = str_to_upper(strata))
+  
+
+survprimorder$strata <- factor(survprimorder$strata, levels = survprimorder$strata[order(survprimorder$surv)])
+
+survprimorder %>%
+ggplot(aes(x = strata, y = surv, label = surv)) +
+    geom_point(stat = 'identity', aes(col = type), size = 8) +
+    geom_text(color = "white", size = 2) +
+    coord_flip() +
+    theme_grey() +
+    labs(y = "Survival Probability", x = "Position", title = "Probability of Survival to Age 75", subtitle = "By Position", col = "") +
+    theme(plot.title = element_text(size = 16, color = 'darkblue', face = 'bold'),
+          plot.subtitle = element_text(size = 14, color = 'purple', face = 'bold.italic'))
+
+```
+
+The 10 lowest probabilities in this graph are all offensive positions. Also the defensive positions closer to the line of scrimmage seem to have lower overall longevity. It may be possible that playing at the line of scrimmage in the NFL could reduce life expectancy. Players in the backfield(safety, wide receiver) have very impressive life expectancy. Which could also be an indicator that the line of scrimmage is dangerous. 
+
+# Is There a Trend in Weight?
+
+The dataset contains information on height and weight, which allows for a BMI calculation. Are there a lot of overweight players in the NFL? If so, are they dying sooner?
+
+```{r}
+# even heights are in different date format 
+# need to fix legend order
+
+BMI_surv <- survfit(Surv(age_years, dead)~weight_status, data = BMI)
+ggbmi <- ggsurvplot(BMI_surv, break.x.by = 10, legend.title = "",
+           legend.labs = c("Morbidly Obese", "Normal", "Obese",
+                           "Overweight"), 
+           xlab = "Age", ggtheme = theme_grey())
+
+ggbmi$plot <- ggbmi$plot + labs(
+  title = "Based on BMI Status"
+)
+
+ggbmi <- ggpar(
+  ggbmi,
+  font.title = c(16, "bold", "darkblue"),
+  font.x = c(14, "bold.italic", "darkred"),
+  font.y = c(14, "bold.italic", "darkred"),
+  font.xtickslab = c(12, "plain", "darkgreen"),
+  font.ytickslab = c(12, "plain", "darkgreen")
+)
+
+ggbmi
+```
+
+Clearly NFL players that are classified as morbidly obese and obese are dying sooner than their peers. Could this be the reason NFL players live slightly shorter lives? To explore this question we will check to see if there are a disproportionate amount of obese NFL players compared to the United States male population.
+
+```{r, warning = FALSE, message = FALSE, fig.width=9}
+obese <- c(`10` = "Morbidly Obese", `9` = "Obese")
+
+ggplot(data = joined_obese, aes(perc, value)) +
+  geom_line(data = joined_obese, aes(perc, value, group = percent, color = ISO), size = 1.5) +
+  geom_point(size = 1) +
+  labs(x = "", y = "Percentage", title = "Percent of Adult Males that are Obese") +
+  scale_color_manual(labels = c("NFL", "USA"), values = c("#6666b3", "#ac3939")) +
+  theme(legend.title = element_blank()) +
+  facet_wrap(~group, labeller = as_labeller(obese)) +
+  theme(plot.title = element_text(hjust = .5, color = 'darkblue', face = 'bold', size = 16)) +
+  theme_grey()
+```
+
+The USA reportedly has a larger obesity problem than most other countries, so to see that NFL players have a much higher percentage of obese and morbidly obese players is concerning. It is no secret that obesity is a poor indicator for life expectancy. 
+
+## Time in the League
+
+Some articles report that NFL players with longer careers have shorter lifespans. One Washington Post writer said, "Various unsurprising studies indicate high early mortality rates among linemen resulting from cardiovascular disease. For all players who play five or more years, life expectancy is less than 60; for linemen it is much less." [^3] 
+This next survival curve groups NFL players by the number of years they played in the league.
+
+```{r}
+# by years in the league
+nfl_survival$start <- as.numeric(nfl_survival$start)
+nfl_survival$finish <- as.numeric(nfl_survival$finish)
+levels <- c(-Inf, 5, 10, 14, Inf)
+labels <- c("0-5", "6-10", "11-14", "More than 15")
+
+years_played <- nfl_survival %>%
+  mutate(years_played = finish - start,
+         group = cut(years_played, levels, labels = labels)) 
+
+years_surv <- survfit(Surv(age_years, dead)~group, data = years_played)
+ggyear <- ggsurvplot(years_surv, legend.title = "", break.x.by = 10, 
+                     legend.labs = c("0-5 years", "6-10 years", "11-14 years",
+                                     "More than 15 years"),
+                     xlab = "Age", ggtheme = theme_grey())
+
+ggyear$plot <- ggyear$plot + labs(
+  title = "Based on Length of Career"
+)
+
+ggyear <- ggpar(
+  ggyear,
+  font.title = c(16, "bold", "darkblue"),
+  font.x = c(14, "bold.italic", "darkred"),
+  font.y = c(14, "bold.italic", "darkred"),
+  font.xtickslab = c(12, "plain", "darkgreen"),
+  font.ytickslab = c(12, "plain", "darkgreen")
+)
+
+ggyear
+```
+
+Looks like the opposite might be true for this assumption. Perhaps a shorter career means a tougher position, where sustaining so many hits is not possible for so long. A shorter career could be an indicator of lowered life expectancy long term. 
+
+## Time Period
+
+Perhaps the most important thing to consider with this data is that it contains NFL players that were born nearly a century ago. Life expectancy was obviously much lower then. It's necessary to check and make sure that this factor is not skewing our data. This next plot will look at probability of survival based on what time period the players were in the league. 
+
+```{r}
+levels <- c(-Inf, 1920, 1940, 1960, Inf)
+labels <- c("1920-1939", "1940-1959", "1960-1979", "1980+")
+
+decade <- nfl_survival %>%
+  mutate(decade = cut(finish, levels, labels = labels))
+
+decade_surv <- survfit(Surv(age_years, dead)~decade, data = decade)
+ggdec <- ggsurvplot(decade_surv, legend.title = "", break.x.by = 10,
+                    legend.labs = c("1920-1939", "1940-1959", "1960-1979",
+                                    "1980+"), xlab = "Age",
+                    ggtheme = theme_grey())
+
+ggdec$plot <- ggdec$plot + labs(
+  title = "Based on Time Period Played"
+)
+
+ggdec <- ggpar(
+  ggdec,
+  font.title = c(16, "bold", "darkblue"),
+  font.x = c(14, "bold.italic", "darkred"),
+  font.y = c(14, "bold.italic", "darkred"),
+  font.xtickslab = c(12, "plain", "darkgreen"),
+  font.ytickslab = c(12, "plain", "darkgreen")
+)
+
+ggdec
+```
+
+It's suprising and very interesting to see the 1940-1959 period be the lowest of the groups. It was also interesting to see that the earliest time period shows very good longevity up until about 65. 
+
+Nevertheless, it's clear that the players born a long time ago in the dataset are dying faster. Here are each of these time periods compared to the 2007 U.S. males life table, shown in red. 
+
+```{r}
+dec <- fortify(decade_surv)
+
+ggplot(dec, aes(time, surv)) +
+    geom_line(size = 1, aes(color = "NFL Players")) +
+    geom_line(data = life07, aes(age_years, percent_survived, color = "2007 USA avg"), size = 1) +
+    labs(y = "Survival Probability", x = "", title = "Compared to the General Public", colour = "") +
+    scale_x_continuous(breaks = seq(20,100,10)) +
+    facet_wrap(~strata) +
+    theme_grey() +
+    theme(plot.title = element_text(hjust = .5, color = 'darkblue', face = 'bold', size = 16))
+```
+
+## Conclusion
+
+The survival curve that showed all NFL players next to the 2007 USA male average showed NFL survival probability to be slightly less than average. The fact that the earlier players clearly brought down the curve is very important to consider. It is possible that this factor alone could account for the difference seen at the beginning. It seems that NFL players might not have a lowered life expectancy after all. 
+
+However, it was clear that there are higher rates of obesity in the NFL, and that these players die sooner. A short career also showed to yield a faster death. I would still argue that obese NFL players that had very short careers are at a considerable higher risk than the general public.
+
+If someone has dedicated their life to football to be able to play in the NFL, the have sacrificed their body for years. That could take a toll on someone, yet these players do enjoy some of the best medical care while they are playing. Yet, players with short careers have gone through lifelong preparation to lose this care quickly.
+
+I argue that the data demonstrates that playing in the NFL is reletively safe for the majority of players. But, players that are obese, playing on the line of scrimmage, or those that have very short careers are dying faster.
+
+### References
+
+[^1]: https://www.forbes.com/sites/realspin/2013/08/18/why-everything-you-hear-about-the-deadly-game-of-football-is-false/#4a0091743778
+
+[^2]: https://operations.nfl.com/the-players/development-pipeline/college-advisory-committee/nfl-player-fact-vs-fiction/
+
+[^3]: https://www.washingtonpost.com/opinions/george-f-will-footballs-problem-with-danger-on-the-field-isnt-going-away/2012/08/03/ff71ec48-dcd0-11e1-8e43-4a3c4375504a_story.html?
